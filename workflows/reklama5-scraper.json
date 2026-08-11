@@ -1,0 +1,607 @@
+{
+  "name": "Reklama5 - Недвижности над 100.000 € - Извлекување на контакти",
+  "nodes": [
+    {
+      "id": "n1",
+      "name": "Manual Trigger",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [-680, 200],
+      "parameters": {}
+    },
+    {
+      "id": "n2",
+      "name": "Schedule Trigger",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [-680, 400],
+      "disabled": true,
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "days",
+              "daysInterval": 1,
+              "triggerAtHour": 6
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "n3",
+      "name": "Config",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [-460, 300],
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            { "id": "c1", "name": "priceFrom", "value": 100000, "type": "number" },
+            { "id": "c2", "name": "waitSeconds", "value": 4, "type": "number" },
+            { "id": "c3", "name": "baseRetryWaitSeconds", "value": 3, "type": "number" },
+            { "id": "c4", "name": "maxRetries", "value": 3, "type": "number" },
+            { "id": "c5", "name": "maxPages", "value": 50, "type": "number" }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "n4",
+      "name": "Init Pagination",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [-240, 300],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const staticData = $getWorkflowStaticData('global');\nstaticData.listings = [];\n\nreturn [{\n  json: {\n    page: 1,\n    attempt: 0\n  }\n}];"
+      }
+    },
+    {
+      "id": "n5",
+      "name": "Fetch Search Page",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [-20, 300],
+      "onError": "continueErrorOutput",
+      "parameters": {
+        "method": "GET",
+        "url": "=https://reklama5.mk/Search?city=&cat=157&q=&sell=1&buy=0&rent=0&includeforrent=0&trade=0&includeOld=0&includeNew=0&cargoReady=0&DDVIncluded=0&private=0&company=0&page={{ $json.page }}&SortByPrice=0&pricefrom=100000&priceto=&pageView=",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "User-Agent", "value": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36" },
+            { "name": "Accept-Language", "value": "mk,mk-MK;q=0.9,en;q=0.8" }
+          ]
+        },
+        "options": {
+          "timeout": 45000,
+          "response": {
+            "response": {
+              "responseFormat": "text"
+            }
+          }
+        }
+      }
+    },
+    {
+      "id": "n6",
+      "name": "Parse Search Page",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [200, 300],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const staticData = $getWorkflowStaticData('global');\nconst input = $input.first().json;\nconst html = input.data || '';\nconst maxPages = $('Config').first().json.maxPages;\n\nconst idPattern = /AdDetails\\?ad=(\\d+)/gi;\nconst foundIds = new Set();\nlet m;\nwhile ((m = idPattern.exec(html)) !== null) {\n  foundIds.add(m[1]);\n}\n\nfor (const id of foundIds) {\n  if (!staticData.listings.some(l => l.adId === id)) {\n    staticData.listings.push({ adId: id, url: `https://reklama5.mk/AdDetails?ad=${id}` });\n  }\n}\n\nconst nextPage = (input.page || 1) + 1;\nconst hasMore = foundIds.size > 0;\n\nreturn [{\n  json: {\n    page: nextPage,\n    attempt: 0,\n    foundOnPage: foundIds.size,\n    shouldContinuePaginating: hasMore && nextPage <= maxPages\n  }\n}];"
+      }
+    },
+    {
+      "id": "n7",
+      "name": "Search Page Retry Handler",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [-20, 520],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const raw = $input.first().json || {};\nconst maxRetries = $('Config').first().json.maxRetries;\nconst page = raw.page || 1;\nconst attempt = (raw.attempt || 0) + 1;\nconst errorMessage = (raw.error && (raw.error.message || raw.error)) || raw.message || 'Барањето не успеа (непозната грешка)';\n\nreturn [{\n  json: {\n    page,\n    attempt,\n    lastError: String(errorMessage),\n    shouldRetrySearch: attempt <= maxRetries\n  }\n}];"
+      }
+    },
+    {
+      "id": "n8",
+      "name": "Search Retry Needed?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [200, 520],
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "loose" },
+          "conditions": [
+            {
+              "id": "sc1",
+              "leftValue": "={{ $json.shouldRetrySearch }}",
+              "rightValue": "",
+              "operator": { "type": "boolean", "operation": "true", "singleValue": true }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "n9",
+      "name": "Search Retry Wait",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [420, 620],
+      "parameters": {
+        "resume": "timeInterval",
+        "unit": "seconds",
+        "amount": "={{ Math.round($('Config').first().json.baseRetryWaitSeconds * Math.pow(2, $json.attempt)) }}"
+      }
+    },
+    {
+      "id": "n10",
+      "name": "Prep Search Error Row",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [420, 460],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const raw = $input.first().json;\nconst searchUrl = `https://reklama5.mk/Search?city=&cat=157&q=&sell=1&buy=0&rent=0&includeforrent=0&trade=0&includeOld=0&includeNew=0&cargoReady=0&DDVIncluded=0&private=0&company=0&page=${raw.page}&SortByPrice=0&pricefrom=100000&priceto=&pageView=`;\n\nreturn [{\n  json: {\n    'Чекор': `Преземање страница за пребарување ${raw.page}`,\n    'Порака за грешка': raw.lastError || 'Непозната грешка',\n    'Линк до оглас': searchUrl,\n    'Датум и време': new Date().toISOString(),\n    page: raw.page\n  }\n}];"
+      }
+    },
+    {
+      "id": "n11",
+      "name": "Log Search Page Error",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [640, 460],
+      "parameters": {
+        "operation": "append",
+        "documentId": { "__rl": true, "mode": "id", "value": "" },
+        "sheetName": { "__rl": true, "mode": "list", "value": "Errors", "cachedResultName": "Errors" },
+        "columns": {
+          "mappingMode": "autoMapInputData",
+          "value": {},
+          "matchingColumns": [],
+          "schema": []
+        },
+        "options": {}
+      },
+      "credentials": {
+        "googleSheetsOAuth2Api": { "id": "REPLACE_ME", "name": "Google Sheets account" }
+      }
+    },
+    {
+      "id": "n12",
+      "name": "Skip To Next Page",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [860, 460],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const raw = $input.first().json;\nconst maxPages = $('Config').first().json.maxPages;\nconst nextPage = (raw.page || 1) + 1;\n\nreturn [{\n  json: {\n    page: nextPage,\n    attempt: 0,\n    shouldContinuePaginating: nextPage <= maxPages\n  }\n}];"
+      }
+    },
+    {
+      "id": "n13",
+      "name": "More Pages?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [420, 300],
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "loose" },
+          "conditions": [
+            {
+              "id": "mp1",
+              "leftValue": "={{ $json.shouldContinuePaginating }}",
+              "rightValue": "",
+              "operator": { "type": "boolean", "operation": "true", "singleValue": true }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "n14",
+      "name": "Pagination Wait",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [640, 180],
+      "parameters": {
+        "resume": "timeInterval",
+        "unit": "seconds",
+        "amount": "={{ $('Config').first().json.waitSeconds }}"
+      }
+    },
+    {
+      "id": "n15",
+      "name": "Get Collected Listings",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [860, 220],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const staticData = $getWorkflowStaticData('global');\nconst listings = staticData.listings || [];\nreturn listings.map(l => ({ json: l }));"
+      }
+    },
+    {
+      "id": "n16",
+      "name": "Read Existing Listings",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [860, 400],
+      "parameters": {
+        "operation": "read",
+        "documentId": { "__rl": true, "mode": "id", "value": "" },
+        "sheetName": { "__rl": true, "mode": "list", "value": "Listings", "cachedResultName": "Listings" },
+        "options": {}
+      },
+      "credentials": {
+        "googleSheetsOAuth2Api": { "id": "REPLACE_ME", "name": "Google Sheets account" }
+      }
+    },
+    {
+      "id": "n17",
+      "name": "Filter New Listings",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1080, 400],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const existingRows = $input.all().map(i => i.json);\nconst existingIds = new Set();\nfor (const row of existingRows) {\n  const link = row['Линк до оглас'] || '';\n  const match = String(link).match(/ad=(\\d+)/);\n  if (match) existingIds.add(match[1]);\n}\n\nconst collected = $('Get Collected Listings').all().map(i => i.json);\nconst newListings = collected.filter(l => !existingIds.has(l.adId));\n\nreturn newListings.map(l => ({ json: { ...l, attempt: 0 } }));"
+      }
+    },
+    {
+      "id": "n18",
+      "name": "Loop Listings",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [1300, 400],
+      "parameters": {
+        "batchSize": 1,
+        "options": {}
+      }
+    },
+    {
+      "id": "n19",
+      "name": "Fetch Listing Detail",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1520, 320],
+      "onError": "continueErrorOutput",
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $json.url }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "User-Agent", "value": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36" },
+            { "name": "Accept-Language", "value": "mk,mk-MK;q=0.9,en;q=0.8" }
+          ]
+        },
+        "options": {
+          "timeout": 45000,
+          "response": {
+            "response": {
+              "responseFormat": "text"
+            }
+          }
+        }
+      }
+    },
+    {
+      "id": "n20",
+      "name": "Parse Listing Detail",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1740, 260],
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "const html = $json.data || '';\nconst url = $json.url || '';\nconst adId = $json.adId || (url.match(/ad=(\\d+)/) || [])[1] || '';\n\nfunction decodeEntities(str) {\n  return str\n    .replace(/&nbsp;/g, ' ')\n    .replace(/&amp;/g, '&')\n    .replace(/&quot;/g, '\"')\n    .replace(/&#39;/g, \"'\")\n    .replace(/&lt;/g, '<')\n    .replace(/&gt;/g, '>')\n    .trim();\n}\nfunction stripTags(str) {\n  return decodeEntities(str.replace(/<[^>]*>/g, ' ').replace(/\\s+/g, ' ')).trim();\n}\n\nconst cleanHtml = html\n  .replace(/<script[\\s\\S]*?<\\/script>/gi, ' ')\n  .replace(/<style[\\s\\S]*?<\\/style>/gi, ' ');\n\n// Title (h1)\nlet title = '';\nconst h1Match = cleanHtml.match(/<h1[^>]*>([\\s\\S]*?)<\\/h1>/i);\nif (h1Match) title = stripTags(h1Match[1]);\n\n// Price - look in a window right after the h1, fall back to first price-like match on the page\nlet priceRaw = '';\nlet priceCurrency = '';\nlet priceNumeric = null;\nconst priceRegex = /([\\d]{1,3}(?:[.,]\\d{3})*(?:[.,]\\d+)?)\\s*(€|МКД|ден\\.?)/i;\nif (h1Match) {\n  const afterH1 = cleanHtml.slice(h1Match.index + h1Match[0].length, h1Match.index + h1Match[0].length + 1500);\n  const priceMatch = afterH1.match(priceRegex);\n  if (priceMatch) {\n    priceRaw = `${priceMatch[1]} ${priceMatch[2]}`.trim();\n    priceCurrency = /€/.test(priceMatch[2]) ? '€' : 'МКД';\n    priceNumeric = parseFloat(priceMatch[1].replace(/\\./g, '').replace(',', '.'));\n  }\n}\nif (!priceRaw) {\n  const anyPrice = cleanHtml.match(priceRegex);\n  if (anyPrice) {\n    priceRaw = `${anyPrice[1]} ${anyPrice[2]}`.trim();\n    priceCurrency = /€/.test(anyPrice[2]) ? '€' : 'МКД';\n    priceNumeric = parseFloat(anyPrice[1].replace(/\\./g, '').replace(',', '.'));\n  }\n}\n\n// Date posted\nlet datePosted = '';\nconst dateMatch = cleanHtml.match(/(Денес|Вчера|\\d{1,2}\\.\\d{1,2}\\.\\d{4})\\s*,?\\s*(\\d{1,2}:\\d{2})/i);\nif (dateMatch) datePosted = `${dateMatch[1]} ${dateMatch[2]}`;\n\n// Location: Cyrillic \"Municipality / City\" pattern, searched near the date first\nlet location = '';\nconst cyr = 'А-ШЀ-ЯЃЌЉЊЏабвгдѓежзѕијклљмнњопрстќуфхцчџш';\nconst locRegex = new RegExp(`([${cyr}][${cyr}\\\\s]{1,40})\\\\/\\\\s*([${cyr}][${cyr}\\\\s]{1,40})`, 'u');\nif (dateMatch) {\n  const around = cleanHtml.slice(Math.max(0, dateMatch.index - 300), dateMatch.index + 300);\n  const locMatch = stripTags(around).match(locRegex);\n  if (locMatch) location = `${locMatch[1].trim()} / ${locMatch[2].trim()}`;\n}\nif (!location) {\n  const locMatch = stripTags(cleanHtml).match(locRegex);\n  if (locMatch) location = `${locMatch[1].trim()} / ${locMatch[2].trim()}`;\n}\n\n// Seller / agency block: anchored on the 'Се продава од' label\nlet sellerName = '';\nlet sellerType = 'Приватно лице';\nlet phoneRaw = '';\nlet phoneSource = 'sidebar';\nconst phoneRegex = /0\\d{1,2}[\\s\\/\\-]?\\d{3}[\\s\\/\\-]?\\d{3,4}/;\n\nconst sellerLabelIdx = cleanHtml.indexOf('Се продава од');\nif (sellerLabelIdx !== -1) {\n  const block = cleanHtml.slice(sellerLabelIdx, sellerLabelIdx + 2500);\n  const hasImage = /<img\\b/i.test(block);\n  sellerType = hasImage ? 'Агенција' : 'Приватно лице';\n\n  const blockText = stripTags(block).replace(/^Се продава од:?\\s*/i, '');\n  const phoneMatchInBlock = blockText.match(phoneRegex);\n  if (phoneMatchInBlock) {\n    phoneRaw = phoneMatchInBlock[0].trim();\n    let namePart = blockText.slice(0, phoneMatchInBlock.index).trim();\n    namePart = namePart.replace(/Се продава од:?/i, '').trim();\n    sellerName = namePart.slice(-80).trim();\n  } else {\n    sellerName = blockText.slice(0, 80).trim();\n  }\n}\n\n// Fallback: scan whole page text if the structured sidebar phone wasn't found\nif (!phoneRaw) {\n  const fullText = stripTags(cleanHtml);\n  const fallbackMatch = fullText.match(phoneRegex);\n  if (fallbackMatch) {\n    phoneRaw = fallbackMatch[0].trim();\n    phoneSource = 'fallback-scan';\n  }\n}\n\nconst phoneDigits = phoneRaw.replace(/\\D/g, '');\nlet phoneDisplay = phoneRaw;\nif (phoneDigits && phoneDigits !== phoneRaw) {\n  phoneDisplay = `${phoneRaw} (${phoneDigits})`;\n}\n\nconst fullUrl = url.startsWith('http')\n  ? url\n  : `https://reklama5.mk${url.startsWith('/') ? '' : '/'}${url}`;\nconst isAllowedHost = fullUrl.startsWith('https://reklama5.mk/');\n\nconst priceFrom = $('Config').first().json.priceFrom;\nconst isValidListing = priceCurrency === '€' && priceNumeric !== null && priceNumeric >= priceFrom && isAllowedHost;\n\nreturn {\n  json: {\n    adId,\n    title,\n    priceRaw,\n    priceCurrency,\n    priceNumeric,\n    location,\n    datePosted,\n    sellerName,\n    sellerType,\n    phoneRaw,\n    phoneDigits,\n    phoneDisplay,\n    phoneSource,\n    url: fullUrl,\n    isAllowedHost,\n    isValidListing,\n    scrapedAt: new Date().toISOString()\n  }\n};"
+      }
+    },
+    {
+      "id": "n21",
+      "name": "Currency & Price Filter",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [1960, 320],
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "loose" },
+          "conditions": [
+            {
+              "id": "cpf1",
+              "leftValue": "={{ $json.isValidListing }}",
+              "rightValue": "",
+              "operator": { "type": "boolean", "operation": "true", "singleValue": true }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "n22",
+      "name": "Format Row for Sheet",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2180, 200],
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "return {\n  json: {\n    'Наслов на оглас': $json.title,\n    'Цена': $json.priceRaw,\n    'Локација': $json.location,\n    'Датум на објавување': $json.datePosted,\n    'Име на продавач/агенција': $json.sellerName,\n    'Телефон': $json.phoneDisplay,\n    'Приватно/Агенција': $json.sellerType,\n    'Линк до оглас': $json.url,\n    'Датум на извлекување': $json.scrapedAt\n  }\n};"
+      }
+    },
+    {
+      "id": "n23",
+      "name": "Append Listing Row",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [2400, 200],
+      "parameters": {
+        "operation": "append",
+        "documentId": { "__rl": true, "mode": "id", "value": "" },
+        "sheetName": { "__rl": true, "mode": "list", "value": "Listings", "cachedResultName": "Listings" },
+        "columns": {
+          "mappingMode": "autoMapInputData",
+          "value": {},
+          "matchingColumns": [],
+          "schema": []
+        },
+        "options": {}
+      },
+      "credentials": {
+        "googleSheetsOAuth2Api": { "id": "REPLACE_ME", "name": "Google Sheets account" }
+      }
+    },
+    {
+      "id": "n24",
+      "name": "Prep Excluded Row",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2180, 440],
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "return {\n  json: {\n    'Чекор': 'Филтер на валута/цена/домен',\n    'Порака за грешка': `Исклучено: цена=\"${$json.priceRaw}\" валута=${$json.priceCurrency || 'непозната'} износ=${$json.priceNumeric} дозволен домен=${$json.isAllowedHost}`,\n    'Линк до оглас': $json.url,\n    'Датум и време': $json.scrapedAt || new Date().toISOString()\n  }\n};"
+      }
+    },
+    {
+      "id": "n25",
+      "name": "Append Excluded Row",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [2400, 440],
+      "parameters": {
+        "operation": "append",
+        "documentId": { "__rl": true, "mode": "id", "value": "" },
+        "sheetName": { "__rl": true, "mode": "list", "value": "Errors", "cachedResultName": "Errors" },
+        "columns": {
+          "mappingMode": "autoMapInputData",
+          "value": {},
+          "matchingColumns": [],
+          "schema": []
+        },
+        "options": {}
+      },
+      "credentials": {
+        "googleSheetsOAuth2Api": { "id": "REPLACE_ME", "name": "Google Sheets account" }
+      }
+    },
+    {
+      "id": "n26",
+      "name": "Listing Retry Handler",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1520, 560],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const raw = $input.first().json || {};\nconst maxRetries = $('Config').first().json.maxRetries;\nconst url = raw.url || '';\nconst adId = raw.adId || (url.match(/ad=(\\d+)/) || [])[1] || '';\nconst attempt = (raw.attempt || 0) + 1;\nconst errorMessage = (raw.error && (raw.error.message || raw.error)) || raw.message || 'Барањето не успеа (непозната грешка)';\n\nreturn [{\n  json: {\n    url,\n    adId,\n    attempt,\n    lastError: String(errorMessage),\n    shouldRetryListing: attempt <= maxRetries\n  }\n}];"
+      }
+    },
+    {
+      "id": "n27",
+      "name": "Listing Retry Needed?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [1740, 560],
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "loose" },
+          "conditions": [
+            {
+              "id": "lr1",
+              "leftValue": "={{ $json.shouldRetryListing }}",
+              "rightValue": "",
+              "operator": { "type": "boolean", "operation": "true", "singleValue": true }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "n28",
+      "name": "Listing Retry Wait",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [1960, 660],
+      "parameters": {
+        "resume": "timeInterval",
+        "unit": "seconds",
+        "amount": "={{ Math.round($('Config').first().json.baseRetryWaitSeconds * Math.pow(2, $json.attempt)) }}"
+      }
+    },
+    {
+      "id": "n29",
+      "name": "Prep Listing Error Row",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1960, 560],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const raw = $input.first().json;\nconst maxRetries = $('Config').first().json.maxRetries;\n\nreturn [{\n  json: {\n    'Чекор': `Преземање на детали за оглас (по ${maxRetries} обиди)`,\n    'Порака за грешка': raw.lastError || 'Непозната грешка',\n    'Линк до оглас': raw.url || '',\n    'Датум и време': new Date().toISOString()\n  }\n}];"
+      }
+    },
+    {
+      "id": "n30",
+      "name": "Log Listing Error",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [2180, 560],
+      "parameters": {
+        "operation": "append",
+        "documentId": { "__rl": true, "mode": "id", "value": "" },
+        "sheetName": { "__rl": true, "mode": "list", "value": "Errors", "cachedResultName": "Errors" },
+        "columns": {
+          "mappingMode": "autoMapInputData",
+          "value": {},
+          "matchingColumns": [],
+          "schema": []
+        },
+        "options": {}
+      },
+      "credentials": {
+        "googleSheetsOAuth2Api": { "id": "REPLACE_ME", "name": "Google Sheets account" }
+      }
+    },
+    {
+      "id": "n31",
+      "name": "Rate Limit Wait",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [2620, 400],
+      "parameters": {
+        "resume": "timeInterval",
+        "unit": "seconds",
+        "amount": "={{ $('Config').first().json.waitSeconds }}"
+      }
+    },
+    {
+      "id": "n32",
+      "name": "Done",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [1300, 620],
+      "parameters": {}
+    },
+    {
+      "id": "s1",
+      "name": "Sticky Note - Setup",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [-700, -80],
+      "parameters": {
+        "width": 620,
+        "height": 220,
+        "content": "## Пред прво стартување\n1. Отвори ги сите 5 Google Sheets јазли (Read Existing Listings, Append Listing Row, Append Excluded Row, Log Search Page Error, Log Listing Error) и избери го твојот Google Sheets credential + твојот Spreadsheet.\n2. Табелата треба да има 2 таба:\n   - **Listings** со заглавија точно: Наслов на оглас | Цена | Локација | Датум на објавување | Име на продавач/агенција | Телефон | Приватно/Агенција | Линк до оглас | Датум на извлекување\n   - **Errors** со заглавија точно: Чекор | Порака за грешка | Линк до оглас | Датум и време\n3. Прво стартувај го `reklama5-verification.json` за да провериш валута и категории пред целосно пуштање."
+      }
+    },
+    {
+      "id": "s2",
+      "name": "Sticky Note - Retry Logic",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [-40, 700],
+      "parameters": {
+        "width": 480,
+        "height": 200,
+        "content": "## Retry / Exponential backoff\nAко HTTP барањето не успее (timeout/5xx), се обидува повторно до `maxRetries` (стандардно 3) пати, со зголемено чекање помеѓу обидите (~3s, 6s, 12s, 24s...). По исцрпување на обидите, грешката се логира во табот Errors и работата продолжува со следниот оглас/страница."
+      }
+    },
+    {
+      "id": "s3",
+      "name": "Sticky Note - Currency Guard",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [1740, 60],
+      "parameters": {
+        "width": 480,
+        "height": 180,
+        "content": "## Заштита за валута/цена\nИако пребарувањето филтрира pricefrom=100000, некои огласи може да се прикажани во МКД (не €). Овој јазол чува само огласи со € и износ >= priceFrom; сите други се логираат во табот Errors со причина за исклучување, наместо да се отфрлат тивко."
+      }
+    }
+  ],
+  "connections": {
+    "Manual Trigger": { "main": [[{ "node": "Config", "type": "main", "index": 0 }]] },
+    "Schedule Trigger": { "main": [[{ "node": "Config", "type": "main", "index": 0 }]] },
+    "Config": { "main": [[{ "node": "Init Pagination", "type": "main", "index": 0 }]] },
+    "Init Pagination": { "main": [[{ "node": "Fetch Search Page", "type": "main", "index": 0 }]] },
+    "Fetch Search Page": {
+      "main": [
+        [{ "node": "Parse Search Page", "type": "main", "index": 0 }],
+        [{ "node": "Search Page Retry Handler", "type": "main", "index": 0 }]
+      ]
+    },
+    "Parse Search Page": { "main": [[{ "node": "More Pages?", "type": "main", "index": 0 }]] },
+    "Search Page Retry Handler": { "main": [[{ "node": "Search Retry Needed?", "type": "main", "index": 0 }]] },
+    "Search Retry Needed?": {
+      "main": [
+        [{ "node": "Search Retry Wait", "type": "main", "index": 0 }],
+        [{ "node": "Prep Search Error Row", "type": "main", "index": 0 }]
+      ]
+    },
+    "Search Retry Wait": { "main": [[{ "node": "Fetch Search Page", "type": "main", "index": 0 }]] },
+    "Prep Search Error Row": { "main": [[{ "node": "Log Search Page Error", "type": "main", "index": 0 }]] },
+    "Log Search Page Error": { "main": [[{ "node": "Skip To Next Page", "type": "main", "index": 0 }]] },
+    "Skip To Next Page": { "main": [[{ "node": "More Pages?", "type": "main", "index": 0 }]] },
+    "More Pages?": {
+      "main": [
+        [{ "node": "Pagination Wait", "type": "main", "index": 0 }],
+        [
+          { "node": "Get Collected Listings", "type": "main", "index": 0 },
+          { "node": "Read Existing Listings", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Pagination Wait": { "main": [[{ "node": "Fetch Search Page", "type": "main", "index": 0 }]] },
+    "Read Existing Listings": { "main": [[{ "node": "Filter New Listings", "type": "main", "index": 0 }]] },
+    "Filter New Listings": { "main": [[{ "node": "Loop Listings", "type": "main", "index": 0 }]] },
+    "Loop Listings": {
+      "main": [
+        [{ "node": "Fetch Listing Detail", "type": "main", "index": 0 }],
+        [{ "node": "Done", "type": "main", "index": 0 }]
+      ]
+    },
+    "Fetch Listing Detail": {
+      "main": [
+        [{ "node": "Parse Listing Detail", "type": "main", "index": 0 }],
+        [{ "node": "Listing Retry Handler", "type": "main", "index": 0 }]
+      ]
+    },
+    "Parse Listing Detail": { "main": [[{ "node": "Currency & Price Filter", "type": "main", "index": 0 }]] },
+    "Currency & Price Filter": {
+      "main": [
+        [{ "node": "Format Row for Sheet", "type": "main", "index": 0 }],
+        [{ "node": "Prep Excluded Row", "type": "main", "index": 0 }]
+      ]
+    },
+    "Format Row for Sheet": { "main": [[{ "node": "Append Listing Row", "type": "main", "index": 0 }]] },
+    "Append Listing Row": { "main": [[{ "node": "Rate Limit Wait", "type": "main", "index": 0 }]] },
+    "Prep Excluded Row": { "main": [[{ "node": "Append Excluded Row", "type": "main", "index": 0 }]] },
+    "Append Excluded Row": { "main": [[{ "node": "Rate Limit Wait", "type": "main", "index": 0 }]] },
+    "Listing Retry Handler": { "main": [[{ "node": "Listing Retry Needed?", "type": "main", "index": 0 }]] },
+    "Listing Retry Needed?": {
+      "main": [
+        [{ "node": "Listing Retry Wait", "type": "main", "index": 0 }],
+        [{ "node": "Prep Listing Error Row", "type": "main", "index": 0 }]
+      ]
+    },
+    "Listing Retry Wait": { "main": [[{ "node": "Fetch Listing Detail", "type": "main", "index": 0 }]] },
+    "Prep Listing Error Row": { "main": [[{ "node": "Log Listing Error", "type": "main", "index": 0 }]] },
+    "Log Listing Error": { "main": [[{ "node": "Rate Limit Wait", "type": "main", "index": 0 }]] },
+    "Rate Limit Wait": { "main": [[{ "node": "Loop Listings", "type": "main", "index": 0 }]] }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "pinData": {}
+}
