@@ -120,6 +120,18 @@ Two parsing details worth knowing:
 - Nothing bypasses access control; it reads what's already publicly rendered.
 - Re-check the Terms of Service periodically. No explicit automated-collection clause was found when this was built, but ToS pages change.
 
+## State that lives in workflow static data
+
+The HTTP Request node **replaces the incoming item with the response body**. Any counter passed along as an item field is therefore destroyed by every fetch, which is not obvious until a loop refuses to end. Three things are kept in `$getWorkflowStaticData('global')` for exactly this reason:
+
+| Key | Purpose |
+|---|---|
+| `listings` | Ad IDs collected across all scanned pages |
+| `currentPage` / `searchAttempt` | Pagination position and per-page retry count |
+| `listingAttempt` / `retryAdId` | Per-listing retry count, reset when the loop moves to a new ad |
+
+`Init Pagination` resets all of them at the start of every run. If you edit these nodes, do not switch them back to reading `page` or `attempt` off the incoming item: `page` becomes `undefined`, `1 + 1` is recomputed forever, and the workflow paginates the same page indefinitely without ever reaching the detail loop. The same applies to `attempt` — it would stay at 1 and retry a failing request forever.
+
 ## Known limitations
 
 - **Promoted ads are filtered on the results page, not after fetching.** The results page carries a sponsored strip at the top whose cards use identical markup to real results (`div.ad-desc-div`, `a.SearchAdTitle`) but ignore the search filters — page 1 served a 350 € rental and a 480 € commercial rental despite `sell=1&pricefrom=100000`. Since no container class separates them, `Parse Search Page` reads each card's own price and drops non-matching ones before they cost a fetch. Cards showing no price are kept and left for the detail page to judge. Watch `skippedOnPage` / `skippedSamples` in that node's output if the numbers look off.
