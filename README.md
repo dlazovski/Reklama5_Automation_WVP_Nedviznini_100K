@@ -2,16 +2,26 @@
 
 Automation that walks Reklama5.mk's real estate listings (category 157, for-sale, ≥100,000 €), pulls seller/agency contact info off each listing page, and appends new rows to a Google Sheet. Built for Moduvo.
 
-One workflow — `workflows/reklama5-scraper.json` — with a **Test Mode** toggle in the `Config` node for safely previewing results before it writes anything.
+One workflow — `workflows/reklama5-scraper.json` — with a **Test Mode** toggle in the `Config` node for previewing results before anything is written.
 
-## ⚠️ Important: the live verification described in the brief could not be run by me
+## What the live pages actually look like
 
-The brief asked for a pre-build test fetch (currency check + subcategory check) before building the full scraper. I could not perform that myself: this environment's outbound network policy blocks `reklama5.mk` at the proxy level (confirmed 403 on the CONNECT tunnel — an organization-level egress restriction on my sandbox, not something wrong with the site or your account).
+The original brief described the listing page as it appears in a logged-out browser: an `<h1>` title, a `Се продава од:` sidebar, and an image in that sidebar meaning "agency". Running the workflow against the real site showed all three of those assumptions do not hold for an automated client, so the parser is built against what the server actually returns:
 
-To compensate, I:
-1. Built **Test Mode** into the workflow itself (see below) so you can run the exact check the brief asked for — from your own n8n instance, which has normal internet access — without needing a second file or writing anything to your sheet.
-2. Built both open questions as **defensive, always-on guards**, not one-time assumptions: a currency/price filter that runs on every listing, every run (see "Currency guard" below), regardless of what Test Mode shows you.
-3. Because I never saw the live HTML, all field extraction uses **anchor/regex-based text parsing** tied to the semantic landmarks you confirmed (the `<h1>` title, the "Се продава од:" label, the `AdDetails?ad=` URL pattern, image-presence for agency detection) rather than guessed CSS class names, which would have been much more likely to silently break.
+- **The site serves the English UI to n8n**, even with an `Accept-Language: mk` header. `Се продава од` does not appear anywhere in the fetched HTML — the labels come back as "Sold by"/"Contact" style English text. Whatever selects Macedonian in your browser (a cookie set on first visit, or geo/IP defaulting) is not something the HTTP request reproduces.
+- **There is no `<h1>` on the page at all.** The title lives in `<h5 class="card-title">` and the price in `<h5 class="mb-0 defaultBlue">`.
+- **Every advertiser block contains an image** — a static `/Content/images/cert.png` "Verified Advertiser" badge — so "image present = agency" would have labelled every seller as an agency.
+
+Because of this, every anchor in the parser is a **CSS class or icon class, not label text**, so it works regardless of which language the site decides to serve. Field-by-field:
+
+| Field | Anchor |
+|---|---|
+| Title | `h5.card-title` (falls back to `<title>`) |
+| Price | `h5.defaultBlue` |
+| Date + location | `<span><small>DATE</small></span><br /><p>LOCATION</p>`, searched from the title onward |
+| Seller name | `h5.my-0` |
+| Phone | the `.fa-phone-alt` icon in the sidebar |
+| Agency vs private | uploaded logo (a non-`/Content/images/` image) **or** an agency keyword in the name |
 
 ## 1. Setup
 
@@ -33,75 +43,85 @@ To compensate, I:
    - Select/create your Google Sheets OAuth2 credential.
    - Select your spreadsheet and the correct tab (`Listings` or `Errors` — already pre-filled by name, but click into the field once so n8n binds the actual sheet ID).
 
-4. **First-import checklist** (standard for any hand-authored n8n template — these are one-click confirmations, not real problems):
-   - Google Sheets nodes: confirm the "Operation" shows *Append* (write nodes) or *Get Row(s)* (Read Existing Listings). If n8n shows a version-mismatch banner, click "Update" — it's forward-compatible.
-   - The two HTTP Request nodes (`Fetch Search Page`, `Fetch Listing Detail`): open the "Settings" tab and confirm **On Error** is set to *"Continue (using error output)"* — this is what makes the custom retry loop work instead of stopping the whole run on a timeout.
+4. **Check these two node settings after import** (both are already correct in the JSON, but n8n's import can be finicky and both cause silent, confusing failures if wrong):
+   - `Fetch Search Page` and `Fetch Listing Detail` → **Settings** tab → **On Error** must be *"Continue (using error output)"*. This is what routes failures into the retry loop instead of killing the run on the first timeout.
+   - `Read Existing Listings` → **Settings** tab → **Always Output Data** must be **on**. n8n skips any node that receives zero input items, so on a fresh sheet with no data rows this node returns nothing and the entire pipeline silently stops right there.
 
 ## 2. Run it in Test Mode first
 
 `Config.testMode` is `true` by default. In this mode:
-- Pagination stops after search-results page 1 (doesn't walk page 2, 3, ...).
+- Pagination stops after search-results page 1.
 - Only the first 10 new listings are processed.
 - **Nothing is written to Google Sheets.** Rows that would have been appended instead flow into `Preview Listing Output` / `Preview Search Error` (plain no-op nodes) so you can inspect them in n8n's execution log.
 
-Click "Test workflow", then open `Preview Listing Output` and check the items that landed there for:
+Click "Test workflow", then open `Preview Listing Output` and check the items for:
 
-1. **Currency**: is `priceCurrency` `€` for all of them? If any show `МКД`, that confirms the brief's suspicion about `pricefrom=100000` — the currency guard (see below) already keeps these out of `Listings` regardless, but tell me if it's more than a rare edge case.
-2. **Fields look right**: title, location, date, seller name, phone, and the Агенција/Приватно лице label — spot-check 2-3 against the live listing pages.
-3. **Subcategory coverage**: skim the titles — do they cover different real-estate types (houses, apartments, land, etc.), or all one type? If it's narrow, tell me what other types you'd expect and I'll check whether `cat=157` needs sibling `subcat=` values added to the search URL (Test Mode doesn't check this directly, but 10 real titles is usually enough to tell).
-
-If anything looks wrong, describe the mismatch and I'll adjust the parsing before you turn Test Mode off.
+1. **All fields populated** — title, price, location, date, seller name, phone. An empty column across every row means that field's anchor has drifted and needs updating.
+2. **`Приватно/Агенција` looks right** — spot-check against the live pages. The parser also emits a `sellerTypeSignal` field (`name-keyword` / `uploaded-logo` / `no-logo-no-keyword`) so you can see *why* it decided what it did.
+3. **Currency** — every `Цена` should end in `€`. Anything in МКД is filtered out before it reaches the sheet, but it's worth knowing if it's common.
 
 ## 3. Go live
 
-Open the `Config` node, set `testMode` to `false`, and run again (or enable the `Schedule Trigger` node — disabled by default, daily at 06:00 — for unattended runs). With Test Mode off, pagination walks all pages up to `Config.maxPages` (default 50), all new listings are processed (not just 10), and rows are actually appended to the sheet.
+Open the `Config` node, set `testMode` to `false`, and run. Rows now append to the sheet, and pagination walks up to `maxPages`.
+
+**Mind the runtime.** At ~6 seconds per listing (4s rate-limit wait plus fetch time) and roughly 40+ ad links per results page, a 50-page run is a 3+ hour single execution — fragile against browser disconnects and execution timeouts. Ramp up instead:
+
+| Run | `maxPages` | Result |
+|---|---|---|
+| 1 | 5 | ~200 listings, ~20 min |
+| 2 | 10 | Re-scans 1-10, skips what's stored, adds pages 6-10 |
+| 3 | 20 | Adds pages 11-20 |
+
+Every run starts at page 1, so **re-running with the same `maxPages` adds nothing new** — you have to raise it. Re-scanning is cheap though: dedup happens *before* the detail fetches, so re-covering old pages costs only the search-page requests, not 6 seconds per already-stored listing.
+
+Once you're at full depth, enable the `Schedule Trigger` node (disabled by default, daily 06:00). Ongoing runs mostly dedup away and pick up new arrivals, which is the steady state you want.
 
 ## How it works
 
-**Pagination loop** (`Fetch Search Page` → `Parse Search Page` → `More Pages?` → `Pagination Wait` → back to `Fetch Search Page`):
-- Walks `page=1,2,3...` of the confirmed search URL (`cat=157&sell=1&pricefrom=100000`) until a page returns zero `AdDetails?ad=` links, or `Config.maxPages` is hit (or, in Test Mode, after page 1).
-- Only collects ad IDs + absolute URLs on this pass (`https://reklama5.mk/AdDetails?ad={id}`) — every displayed field (title, price, location, date, seller, phone) is read from the **detail page**, not the results card. This was a deliberate simplification: the detail-page field locations are the ones you confirmed via manual inspection; the results-card markup wasn't, so leaning on the confirmed source reduces the chance of silently wrong data.
-- 3-4s wait between search-page requests (`Config.waitSeconds`).
+**Pagination loop** (`Fetch Search Page` → `Parse Search Page` → `More Pages?` → `Pagination Wait` → back):
+- Walks `page=1,2,3...` of the search URL (`cat=157&sell=1&pricefrom=100000`) until a page returns zero `AdDetails?ad=` links, or `maxPages` is hit (or, in Test Mode, after page 1).
+- Collects only ad IDs and absolute URLs here — every displayed field is read from the detail page, since that markup is the part we've verified.
 
-**Dedup**: before fetching any detail pages, `Read Existing Listings` reads the `Линк до оглас` column of the whole `Listings` tab, extracts the `ad=` ID from each existing link, and `Filter New Listings` drops anything already present. Only genuinely new ad IDs get fetched (then further capped to 10 if Test Mode is on).
+**Dedup**: `Read Existing Listings` reads the `Линк до оглас` column, extracts the `ad=` ID from each stored link, and `Filter New Listings` drops anything already present. Only new ad IDs reach the fetch loop.
 
-**Detail fetch loop** (`Loop Listings` batch-of-1 over new listings):
-- `Fetch Listing Detail` → `Parse Listing Detail` extracts title (`<h1>`), price (first €/МКД-style number after the title), date + location (near a "Денес/Вчера HH:MM" pattern), and the seller block anchored on the "Се продава од" label — image present → Агенција, text-only → Приватно лице. Phone is read from that block first; if not found there, it falls back to scanning the full description text for a Macedonian phone pattern (`07X XXX XXX` / `070/787-127` / `07XXXXXXX`), same as the brief specified.
-- Phone is normalized to digits-only alongside the original: e.g. `070/787-127 (070787127)`.
-- 3-4s wait between every detail-page request (`Config.waitSeconds`).
+**Detail fetch loop** (`Loop Listings`, batch size 1): fetch → parse (see anchor table above) → currency/price guard → sheet. 4s wait between every request.
 
-**Retry / exponential backoff**: both HTTP fetch points use `onError: continueErrorOutput`, so a failed request (timeout, 5xx) routes to a retry handler instead of stopping the workflow. It retries up to `Config.maxRetries` (default 3) times, waiting `baseRetryWaitSeconds × 2^attempt` between tries (≈3s, 6s, 12s, 24s with defaults). After retries are exhausted, the failure is logged to the `Errors` tab (step, error message, URL, timestamp) — or, in Test Mode, to `Preview Search Error` instead — and the workflow moves on to the next listing/page.
+Two parsing details worth knowing:
+- **Relative dates are resolved.** The site shows "Today 13:00"; the sheet stores `11.08.2026 13:00`, since "Today" is meaningless in a row you read next week. The raw string is kept in `datePostedRaw`.
+- **The phone fallback strips URLs first.** The page embeds Google Maps coordinates (`center=42.0069480002806,...`) that match a naive phone pattern — an early version pulled `0069480002` as a phone number. The fallback now strips URLs and only accepts 07X mobile numbers. The primary source remains the sidebar icon anchor.
 
-**Currency guard**: `pricefrom=100000` on the search URL should mean everything returned is above threshold in EUR, but per the brief's own concern, some results can show in МКД (which would put the real EUR value under threshold). `Currency & Price Filter` only lets a row through to `Listings` if the parsed currency is `€` **and** the numeric price is ≥ `Config.priceFrom` **and** the URL host is `reklama5.mk`. Anything that fails this — МКД-priced, unparseable price, or (as a defensive belt-and-suspenders check) a non-reklama5.mk URL — is logged to `Errors` with the reason instead of silently dropped. This guard runs regardless of Test Mode.
+**Retry / exponential backoff**: both HTTP nodes use `onError: continueErrorOutput`, so a timeout or 5xx routes to a retry handler rather than stopping the workflow. Retries up to `maxRetries` (default 3), waiting `baseRetryWaitSeconds × 2^attempt` (≈3s, 6s, 12s, 24s). After that the failure is logged to `Errors` and the run moves on.
 
-**Domain safety**: the search URL is hardcoded to `reklama5.mk` (never the `m.` subdomain), all detail URLs are built by prepending `https://reklama5.mk` to the ID pulled from `AdDetails?ad=`, and the currency guard double-checks the final URL host before writing a row.
+**Currency guard**: `Currency & Price Filter` only passes a row if currency is `€`, the numeric price is ≥ `priceFrom`, and the host is `reklama5.mk`. Failures are logged to `Errors` with the reason rather than silently dropped. Note the price parser handles both `495.000 €` and `116,000 €` formats by checking the length of the last separator group — an earlier version read "180,000 €" as 180.
+
+**Domain safety**: the search URL is hardcoded to `reklama5.mk` (never the `m.` subdomain), detail URLs are rebuilt from the ad ID, and the guard re-checks the host before any write.
 
 ## Tuning (`Config` node)
 
 | Field | Default | Meaning |
 |---|---|---|
-| `testMode` | `true` | Page-1-only, 10-listing cap, no Sheets writes — see "Run it in Test Mode first" |
-| `priceFrom` | 100000 | Minimum EUR price kept (also baked into the search URL) |
-| `waitSeconds` | 4 | Wait between every outbound request (rate limit) |
+| `testMode` | `true` | Page-1-only, 10-listing cap, no Sheets writes |
+| `priceFrom` | 100000 | Minimum EUR price kept |
+| `waitSeconds` | 4 | Wait between every outbound request |
 | `baseRetryWaitSeconds` | 3 | Base for exponential backoff (× 2^attempt) |
 | `maxRetries` | 3 | Max retry attempts per failed request |
-| `maxPages` | 50 | Safety cap on pagination depth (ignored in Test Mode) |
+| `maxPages` | 50 | Pagination depth cap (ignored in Test Mode) |
 
 ## Columns written to `Listings`
 
-`Наслов на оглас, Цена, Локација, Датум на објавување, Име на продавач/агенција, Телефон, Приватно/Агенција, Линк до оглас, Датум на извлекување` — in that order, matching the spec exactly. `Линк до оглас` is always the full absolute URL.
+`Наслов на оглас, Цена, Локација, Датум на објавување, Име на продавач/агенција, Телефон, Приватно/Агенција, Линк до оглас, Датум на извлекување` — in that order. `Линк до оглас` is always the full absolute URL.
 
 ## Respectful-scraping notes
 
-- Only `reklama5.mk` is ever fetched — the workflow never touches `m.reklama5.mk` (which disallows automated access via robots.txt).
-- No login/session/cookies — contact info is confirmed visible while logged out.
-- 3-4s between every single request, both for pagination and for detail pages; failed requests back off exponentially rather than hammering a slow server.
-- Nothing here bypasses any access control — it reads what's already publicly rendered on the page.
-- Re-check the Terms of Service periodically; the brief noted no explicit automated-collection clause as of this build, but ToS pages change.
+- Only `reklama5.mk` is fetched — never `m.reklama5.mk`, which disallows automated access via robots.txt.
+- No login, session, or cookies — contact info is public on the page.
+- 4s between every request; failures back off exponentially rather than hammering a slow server.
+- Nothing bypasses access control; it reads what's already publicly rendered.
+- Re-check the Terms of Service periodically. No explicit automated-collection clause was found when this was built, but ToS pages change.
 
-## Known limitations / what to watch on first real runs
+## Known limitations
 
-- **Selectors are text-anchor/regex based, not exact CSS selectors** — because I never saw the live HTML. This is deliberately more resilient to class-name churn, but if Reklama5 changes wording (e.g. renames "Се продава од"), extraction breaks silently for that field until updated. Skim the first day or two of output even after Test Mode looks clean.
-- **Subcategory coverage isn't auto-checked** — Test Mode gives you 10 real titles to skim, but doesn't systematically verify `cat=157` covers every real-estate subtype. If you spot a gap, tell me and I'll extend the search loop with `subcat=` values.
-- **The exact JSON shape of the HTTP node's error-branch item** (used by the retry handlers) is based on my best knowledge of current n8n behavior, not a live test. If the `Errors` tab (or `Preview Search Error` in Test Mode) ever shows a blank/wrong `Линк до оглас` on a retry-exhausted row, open `Fetch Listing Detail`'s error output in n8n, check what fields are actually present on that item, and tell me — it's a one-line fix in `Listing Retry Handler` / `Search Page Retry Handler`.
-- Google Sheets node internals (operation names, resource-locator format) are based on current n8n source, not a live import test in your instance — the "First-import checklist" above covers the handful of things worth a 30-second glance.
+- **Search-page extraction is not scoped to the results grid.** `Parse Search Page` takes every `AdDetails?ad=` link on the page, which appears to include promoted or similar-ad blocks: a run turned up a 250 € rental, which cannot legitimately match `sell=1&pricefrom=100000`. The currency/price guard keeps these out of `Listings`, so this is a wasted-time and Errors-tab-noise problem rather than a data-quality one — but at 6 seconds per discarded listing it is worth fixing if you run deep.
+- **Agency detection is confirmed only via the name keyword.** A listing named "Прима Каза - Агенција за недвижности" is correctly labelled Агенција. The uploaded-logo branch (for agencies whose name lacks an agency word) has not been verified against a known example — check `sellerTypeSignal` if a row looks miscategorised.
+- **Parsing is anchored on CSS classes**, which are stable against language changes but not against a site redesign. If a column goes uniformly empty, that anchor moved.
+- **Subcategory coverage is unverified.** Whether `cat=157` alone returns every real-estate subtype was never confirmed; the titles seen so far include apartments, business premises, and land, which suggests broad coverage but is not proof.
