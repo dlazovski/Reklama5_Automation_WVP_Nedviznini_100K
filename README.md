@@ -79,7 +79,8 @@ Once you're at full depth, enable the `Schedule Trigger` node (disabled by defau
 ## How it works
 
 **Pagination loop** (`Fetch Search Page` → `Parse Search Page` → `More Pages?` → `Pagination Wait` → back):
-- Walks `page=1,2,3...` of the search URL (`cat=157&sell=1&pricefrom=100000`) until a page returns zero `AdDetails?ad=` links, or `maxPages` is hit (or, in Test Mode, after page 1).
+- Walks `page=1,2,3...` of the search URL (`cat=157&sell=1&pricefrom=100000`) until a page returns zero result cards, or `maxPages` is hit (or, in Test Mode, after page 1).
+- Reads each result card's own price and keeps only those matching the filter (see the promoted-ads note under Known limitations). Cards with no visible price are kept for the detail page to judge.
 - Collects only ad IDs and absolute URLs here — every displayed field is read from the detail page, since that markup is the part we've verified.
 
 **Dedup**: `Read Existing Listings` reads the `Линк до оглас` column, extracts the `ad=` ID from each stored link, and `Filter New Listings` drops anything already present. Only new ad IDs reach the fetch loop.
@@ -121,7 +122,7 @@ Two parsing details worth knowing:
 
 ## Known limitations
 
-- **Search-page extraction is not scoped to the results grid.** `Parse Search Page` takes every `AdDetails?ad=` link on the page, which appears to include promoted or similar-ad blocks: a run turned up a 250 € rental, which cannot legitimately match `sell=1&pricefrom=100000`. The currency/price guard keeps these out of `Listings`, so this is a wasted-time and Errors-tab-noise problem rather than a data-quality one — but at 6 seconds per discarded listing it is worth fixing if you run deep.
+- **Promoted ads are filtered on the results page, not after fetching.** The results page carries a sponsored strip at the top whose cards use identical markup to real results (`div.ad-desc-div`, `a.SearchAdTitle`) but ignore the search filters — page 1 served a 350 € rental and a 480 € commercial rental despite `sell=1&pricefrom=100000`. Since no container class separates them, `Parse Search Page` reads each card's own price and drops non-matching ones before they cost a fetch. Cards showing no price are kept and left for the detail page to judge. Watch `skippedOnPage` / `skippedSamples` in that node's output if the numbers look off.
 - **Agency detection is confirmed only via the name keyword.** A listing named "Прима Каза - Агенција за недвижности" is correctly labelled Агенција. The uploaded-logo branch (for agencies whose name lacks an agency word) has not been verified against a known example — check `sellerTypeSignal` if a row looks miscategorised.
 - **Parsing is anchored on CSS classes**, which are stable against language changes but not against a site redesign. If a column goes uniformly empty, that anchor moved.
 - **Subcategory coverage is unverified.** Whether `cat=157` alone returns every real-estate subtype was never confirmed; the titles seen so far include apartments, business premises, and land, which suggests broad coverage but is not proof.
