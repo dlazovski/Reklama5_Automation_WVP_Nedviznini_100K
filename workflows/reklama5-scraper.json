@@ -41,7 +41,8 @@
             { "id": "c2", "name": "waitSeconds", "value": 4, "type": "number" },
             { "id": "c3", "name": "baseRetryWaitSeconds", "value": 3, "type": "number" },
             { "id": "c4", "name": "maxRetries", "value": 3, "type": "number" },
-            { "id": "c5", "name": "maxPages", "value": 50, "type": "number" }
+            { "id": "c5", "name": "maxPages", "value": 50, "type": "number" },
+            { "id": "c6", "name": "testMode", "value": true, "type": "boolean" }
           ]
         },
         "options": {}
@@ -93,7 +94,7 @@
       "position": [200, 300],
       "parameters": {
         "mode": "runOnceForAllItems",
-        "jsCode": "const staticData = $getWorkflowStaticData('global');\nconst input = $input.first().json;\nconst html = input.data || '';\nconst maxPages = $('Config').first().json.maxPages;\n\nconst idPattern = /AdDetails\\?ad=(\\d+)/gi;\nconst foundIds = new Set();\nlet m;\nwhile ((m = idPattern.exec(html)) !== null) {\n  foundIds.add(m[1]);\n}\n\nfor (const id of foundIds) {\n  if (!staticData.listings.some(l => l.adId === id)) {\n    staticData.listings.push({ adId: id, url: `https://reklama5.mk/AdDetails?ad=${id}` });\n  }\n}\n\nconst nextPage = (input.page || 1) + 1;\nconst hasMore = foundIds.size > 0;\n\nreturn [{\n  json: {\n    page: nextPage,\n    attempt: 0,\n    foundOnPage: foundIds.size,\n    shouldContinuePaginating: hasMore && nextPage <= maxPages\n  }\n}];"
+        "jsCode": "const staticData = $getWorkflowStaticData('global');\nconst input = $input.first().json;\nconst html = input.data || '';\nconst config = $('Config').first().json;\nconst maxPages = config.maxPages;\nconst testMode = config.testMode;\n\nconst idPattern = /AdDetails\\?ad=(\\d+)/gi;\nconst foundIds = new Set();\nlet m;\nwhile ((m = idPattern.exec(html)) !== null) {\n  foundIds.add(m[1]);\n}\n\nfor (const id of foundIds) {\n  if (!staticData.listings.some(l => l.adId === id)) {\n    staticData.listings.push({ adId: id, url: `https://reklama5.mk/AdDetails?ad=${id}` });\n  }\n}\n\nconst nextPage = (input.page || 1) + 1;\nconst hasMore = foundIds.size > 0;\n\n// Test Mode only ever looks at search-results page 1, then stops paginating\nconst shouldContinuePaginating = testMode ? false : (hasMore && nextPage <= maxPages);\n\nreturn [{\n  json: {\n    page: nextPage,\n    attempt: 0,\n    foundOnPage: foundIds.size,\n    shouldContinuePaginating\n  }\n}];"
       }
     },
     {
@@ -182,7 +183,7 @@
       "position": [860, 460],
       "parameters": {
         "mode": "runOnceForAllItems",
-        "jsCode": "const raw = $input.first().json;\nconst maxPages = $('Config').first().json.maxPages;\nconst nextPage = (raw.page || 1) + 1;\n\nreturn [{\n  json: {\n    page: nextPage,\n    attempt: 0,\n    shouldContinuePaginating: nextPage <= maxPages\n  }\n}];"
+        "jsCode": "const raw = $input.first().json;\nconst config = $('Config').first().json;\nconst nextPage = (raw.page || 1) + 1;\nconst shouldContinuePaginating = config.testMode ? false : (nextPage <= config.maxPages);\n\nreturn [{\n  json: {\n    page: nextPage,\n    attempt: 0,\n    shouldContinuePaginating\n  }\n}];"
       }
     },
     {
@@ -254,7 +255,7 @@
       "position": [1080, 400],
       "parameters": {
         "mode": "runOnceForAllItems",
-        "jsCode": "const existingRows = $input.all().map(i => i.json);\nconst existingIds = new Set();\nfor (const row of existingRows) {\n  const link = row['Линк до оглас'] || '';\n  const match = String(link).match(/ad=(\\d+)/);\n  if (match) existingIds.add(match[1]);\n}\n\nconst collected = $('Get Collected Listings').all().map(i => i.json);\nconst newListings = collected.filter(l => !existingIds.has(l.adId));\n\nreturn newListings.map(l => ({ json: { ...l, attempt: 0 } }));"
+        "jsCode": "const existingRows = $input.all().map(i => i.json);\nconst existingIds = new Set();\nfor (const row of existingRows) {\n  const link = row['Линк до оглас'] || '';\n  const match = String(link).match(/ad=(\\d+)/);\n  if (match) existingIds.add(match[1]);\n}\n\nconst collected = $('Get Collected Listings').all().map(i => i.json);\nlet newListings = collected.filter(l => !existingIds.has(l.adId));\n\nconst testMode = $('Config').first().json.testMode;\nif (testMode) {\n  newListings = newListings.slice(0, 10);\n}\n\nreturn newListings.map(l => ({ json: { ...l, attempt: 0 } }));"
       }
     },
     {
@@ -493,6 +494,110 @@
       "parameters": {}
     },
     {
+      "id": "n33",
+      "name": "Test Mode? (Listing)",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [2400, 100],
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "loose" },
+          "conditions": [
+            {
+              "id": "tm1",
+              "leftValue": "={{ $('Config').first().json.testMode }}",
+              "rightValue": "",
+              "operator": { "type": "boolean", "operation": "true", "singleValue": true }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "n34",
+      "name": "Test Mode? (Excluded)",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [2400, 520],
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "loose" },
+          "conditions": [
+            {
+              "id": "tm2",
+              "leftValue": "={{ $('Config').first().json.testMode }}",
+              "rightValue": "",
+              "operator": { "type": "boolean", "operation": "true", "singleValue": true }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "n35",
+      "name": "Test Mode? (Search Error)",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [640, 580],
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "loose" },
+          "conditions": [
+            {
+              "id": "tm3",
+              "leftValue": "={{ $('Config').first().json.testMode }}",
+              "rightValue": "",
+              "operator": { "type": "boolean", "operation": "true", "singleValue": true }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "n36",
+      "name": "Test Mode? (Listing Error)",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [2180, 680],
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "loose" },
+          "conditions": [
+            {
+              "id": "tm4",
+              "leftValue": "={{ $('Config').first().json.testMode }}",
+              "rightValue": "",
+              "operator": { "type": "boolean", "operation": "true", "singleValue": true }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "n37",
+      "name": "Preview Listing Output",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [2620, 620],
+      "parameters": {}
+    },
+    {
+      "id": "n38",
+      "name": "Preview Search Error",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [860, 640],
+      "parameters": {}
+    },
+    {
       "id": "s1",
       "name": "Sticky Note - Setup",
       "type": "n8n-nodes-base.stickyNote",
@@ -501,7 +606,7 @@
       "parameters": {
         "width": 620,
         "height": 220,
-        "content": "## Пред прво стартување\n1. Отвори ги сите 5 Google Sheets јазли (Read Existing Listings, Append Listing Row, Append Excluded Row, Log Search Page Error, Log Listing Error) и избери го твојот Google Sheets credential + твојот Spreadsheet.\n2. Табелата треба да има 2 таба:\n   - **Listings** со заглавија точно: Наслов на оглас | Цена | Локација | Датум на објавување | Име на продавач/агенција | Телефон | Приватно/Агенција | Линк до оглас | Датум на извлекување\n   - **Errors** со заглавија точно: Чекор | Порака за грешка | Линк до оглас | Датум и време\n3. Прво стартувај го `reklama5-verification.json` за да провериш валута и категории пред целосно пуштање."
+        "content": "## Пред прво стартување\n1. Отвори ги сите 5 Google Sheets јазли (Read Existing Listings, Append Listing Row, Append Excluded Row, Log Search Page Error, Log Listing Error) и избери го твојот Google Sheets credential + твојот Spreadsheet.\n2. Табелата треба да има 2 таба:\n   - **Listings** со заглавија точно: Наслов на оглас | Цена | Локација | Датум на објавување | Име на продавач/агенција | Телефон | Приватно/Агенција | Линк до оглас | Датум на извлекување\n   - **Errors** со заглавија точно: Чекор | Порака за грешка | Линк до оглас | Датум и време\n3. `Config.testMode` е `true` по default - прво стартувај вака (види ја жолтата белешка за Test Mode) и дури потоа стави `testMode: false` за вистински запис во Sheets."
       }
     },
     {
@@ -527,6 +632,18 @@
         "height": 180,
         "content": "## Заштита за валута/цена\nИако пребарувањето филтрира pricefrom=100000, некои огласи може да се прикажани во МКД (не €). Овој јазол чува само огласи со € и износ >= priceFrom; сите други се логираат во табот Errors со причина за исклучување, наместо да се отфрлат тивко."
       }
+    },
+    {
+      "id": "s4",
+      "name": "Sticky Note - Test Mode",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [2380, -60],
+      "parameters": {
+        "width": 480,
+        "height": 220,
+        "content": "## Test Mode\nКога `Config.testMode = true`:\n- Пребарувањето застанува по страница 1 (не продолжува со страница 2, 3...)\n- Се обработуваат само првите 10 нови огласи\n- НИШТА не се запишува во Google Sheets - редовите поминуваат низ 'Preview Listing Output' / 'Preview Search Error' јазлите наместо тоа, за да можеш да ги видиш во execution log-от\n\nКога си задоволен со резултатите, отвори го Config јазолот, стави `testMode: false`, и стартувај повторно за вистински запис."
+      }
     }
   ],
   "connections": {
@@ -549,7 +666,14 @@
       ]
     },
     "Search Retry Wait": { "main": [[{ "node": "Fetch Search Page", "type": "main", "index": 0 }]] },
-    "Prep Search Error Row": { "main": [[{ "node": "Log Search Page Error", "type": "main", "index": 0 }]] },
+    "Prep Search Error Row": { "main": [[{ "node": "Test Mode? (Search Error)", "type": "main", "index": 0 }]] },
+    "Test Mode? (Search Error)": {
+      "main": [
+        [{ "node": "Preview Search Error", "type": "main", "index": 0 }],
+        [{ "node": "Log Search Page Error", "type": "main", "index": 0 }]
+      ]
+    },
+    "Preview Search Error": { "main": [[{ "node": "Skip To Next Page", "type": "main", "index": 0 }]] },
     "Log Search Page Error": { "main": [[{ "node": "Skip To Next Page", "type": "main", "index": 0 }]] },
     "Skip To Next Page": { "main": [[{ "node": "More Pages?", "type": "main", "index": 0 }]] },
     "More Pages?": {
@@ -583,10 +707,23 @@
         [{ "node": "Prep Excluded Row", "type": "main", "index": 0 }]
       ]
     },
-    "Format Row for Sheet": { "main": [[{ "node": "Append Listing Row", "type": "main", "index": 0 }]] },
+    "Format Row for Sheet": { "main": [[{ "node": "Test Mode? (Listing)", "type": "main", "index": 0 }]] },
+    "Test Mode? (Listing)": {
+      "main": [
+        [{ "node": "Preview Listing Output", "type": "main", "index": 0 }],
+        [{ "node": "Append Listing Row", "type": "main", "index": 0 }]
+      ]
+    },
     "Append Listing Row": { "main": [[{ "node": "Rate Limit Wait", "type": "main", "index": 0 }]] },
-    "Prep Excluded Row": { "main": [[{ "node": "Append Excluded Row", "type": "main", "index": 0 }]] },
+    "Prep Excluded Row": { "main": [[{ "node": "Test Mode? (Excluded)", "type": "main", "index": 0 }]] },
+    "Test Mode? (Excluded)": {
+      "main": [
+        [{ "node": "Preview Listing Output", "type": "main", "index": 0 }],
+        [{ "node": "Append Excluded Row", "type": "main", "index": 0 }]
+      ]
+    },
     "Append Excluded Row": { "main": [[{ "node": "Rate Limit Wait", "type": "main", "index": 0 }]] },
+    "Preview Listing Output": { "main": [[{ "node": "Rate Limit Wait", "type": "main", "index": 0 }]] },
     "Listing Retry Handler": { "main": [[{ "node": "Listing Retry Needed?", "type": "main", "index": 0 }]] },
     "Listing Retry Needed?": {
       "main": [
@@ -595,7 +732,13 @@
       ]
     },
     "Listing Retry Wait": { "main": [[{ "node": "Fetch Listing Detail", "type": "main", "index": 0 }]] },
-    "Prep Listing Error Row": { "main": [[{ "node": "Log Listing Error", "type": "main", "index": 0 }]] },
+    "Prep Listing Error Row": { "main": [[{ "node": "Test Mode? (Listing Error)", "type": "main", "index": 0 }]] },
+    "Test Mode? (Listing Error)": {
+      "main": [
+        [{ "node": "Preview Listing Output", "type": "main", "index": 0 }],
+        [{ "node": "Log Listing Error", "type": "main", "index": 0 }]
+      ]
+    },
     "Log Listing Error": { "main": [[{ "node": "Rate Limit Wait", "type": "main", "index": 0 }]] },
     "Rate Limit Wait": { "main": [[{ "node": "Loop Listings", "type": "main", "index": 0 }]] }
   },
