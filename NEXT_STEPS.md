@@ -19,18 +19,22 @@ Duplicate rows on the second run were caused by `Filter New Listings` looking up
 
 Confirmed working against the live sheet: 201 rows read, 201 ad IDs extracted, and the listings it flagged as new were verified absent from the sheet. The node reports `_existingRowsRead`, `_existingIdsFound`, `_collectedThisRun` and `_newAfterDedup` on its first output item if it ever needs re-checking — note the "new" count is measured after Test Mode's 10-item cap, so read it alongside the others.
 
-Duplicates already in the sheet were removed manually; the tab holds 201 unique rows.
-
-Next: resume the ramp — `testMode = false`, `maxPages` to 10, then 20, then 40.
+Duplicates already in the sheet were removed manually, leaving 201 unique rows. A subsequent `maxPages = 10` run then took the sheet to 405 rows / 405 unique — the existing 201 untouched, 204 new appended, no duplicates. Dedup is verified across runs.
 
 ## Also outstanding
 
-- **Error-logging nodes can abort a run.** `Append Excluded Row`, `Log Search Page Error` and `Log Listing Error` stop the whole workflow if they fail, so a problem writing to the `Errors` tab takes down the scrape. Setting their On Error to "Continue" would make runs survive it. Not yet done.
 - **Agency detection's uploaded-logo branch is unverified.** The name-keyword path is confirmed working. An agency whose name contains no agency word would depend on the logo branch, which has never been seen firing against real markup. Check `sellerTypeSignal` on any row that looks miscategorised.
 - **Subcategory coverage unconfirmed.** Whether `cat=157` alone returns every real-estate subtype was never verified.
 - **`Schedule Trigger`** is still disabled. Enable it once the ramp is complete.
+
+## Ramp progress
+
+- `maxPages = 5` → 201 rows
+- `maxPages = 10` → 405 rows
+- Next: `maxPages = 20`, then `40`, until new rows stop appearing. Then enable `Schedule Trigger`.
 
 ## Settings that break silently if lost on re-import
 
 - `Fetch Search Page` and `Fetch Listing Detail` → On Error → *Continue (using error output)*, plus the error output wired to the matching retry handler
 - `Read Existing Listings` → Always Output Data → on
+- `Append Excluded Row`, `Log Search Page Error`, `Log Listing Error` → On Error → *Continue* (plain), so a failure writing to the Errors tab cannot abort the whole run
