@@ -13,27 +13,15 @@ Fixed and verified along the way:
 - Price parsing for both `495.000 €` and `116,000 €` formats
 - Phone fallback no longer matches embedded Google Maps coordinates
 
-## Open — start here tomorrow
+## Dedup — resolved 2026-08-12
 
-**Duplicate rows appeared on the second run.** The run was stopped partway. Dedup should have prevented this: `Read Existing Listings` reads the sheet, `Filter New Listings` drops ad IDs already stored.
+Duplicate rows on the second run were caused by `Filter New Listings` looking up the exact header `Линк до оглас`; any drift in that header produced an empty "already seen" set, so every listing looked new. It now scans every cell of each row for an `ad=` pattern instead, so the column name no longer matters.
 
-`Filter New Listings` has already been rewritten (and is committed here) to fix the most likely cause — it previously looked up the exact header `Линк до оглас`, so any drift in that header name would silently produce an empty "already seen" set and every listing would look new. The new version scans every cell of every row for an `ad=` pattern instead, so the column name no longer matters.
+Confirmed working against the live sheet: 201 rows read, 201 ad IDs extracted, and the listings it flagged as new were verified absent from the sheet. The node reports `_existingRowsRead`, `_existingIdsFound`, `_collectedThisRun` and `_newAfterDedup` on its first output item if it ever needs re-checking — note the "new" count is measured after Test Mode's 10-item cap, so read it alongside the others.
 
-**This fix is committed but has not been tested yet.**
+Duplicates already in the sheet were removed manually; the tab holds 201 unique rows.
 
-### To pick up
-
-1. Paste the current `Filter New Listings` code from `workflows/reklama5-scraper.json` into that node (or re-import the workflow if you would rather redo the Sheets config).
-2. Run with `Config.testMode = true` — fast, writes nothing.
-3. Open `Filter New Listings` and read the diagnostic counts on the first output item:
-   - `_existingRowsRead` — rows returned from the sheet
-   - `_existingIdsFound` — ad IDs extracted from them
-   - `_collectedThisRun` — ad IDs found on the scanned pages
-   - `_newAfterDedup` — what survived the filter
-
-   `_existingRowsRead` around 200 with `_existingIdsFound` at 0 means the column-name problem, and this fix resolves it. `_existingRowsRead` at 0 means the Sheets read itself is returning nothing, which is a different problem in that node's configuration.
-4. Clean the duplicates already in the sheet: Google Sheets → Data → Data cleanup → Remove duplicates, keyed on `Линк до оглас`.
-5. Once dedup is confirmed, resume the ramp: `testMode = false`, `maxPages` to 10, then 20, then 40.
+Next: resume the ramp — `testMode = false`, `maxPages` to 10, then 20, then 40.
 
 ## Also outstanding
 
