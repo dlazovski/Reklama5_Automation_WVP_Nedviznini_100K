@@ -31,11 +31,13 @@ Duplicates already in the sheet were removed manually, leaving 201 unique rows. 
 
 - `maxPages = 5` → 201 rows
 - `maxPages = 10` → 405 rows
-- Next: `maxPages = 20`, then `40`, until new rows stop appearing. Then enable `Schedule Trigger`.
+- `maxPages = 20` → completed
+- `maxPages = 30` → aborted partway on a Google Sheets quota error; retries added, safe to re-run
+- Continue raising until new rows stop appearing, then enable `Schedule Trigger`.
 
 ## Google Sheets rate limiting
 
-A `maxPages = 20` run hit Google's Sheets API write quota (60 writes per minute per user) on `Append Listing Row`, which aborted the run. The workflow writes about 10 rows a minute, well inside quota, so this was either contention with something else using the same Google project or a throttled burst — transient either way.
+A `maxPages = 30` run hit Google's Sheets API write quota (60 writes per minute per user) on `Append Listing Row`, which aborted the run. The workflow writes about 10 rows a minute, well inside quota, so this was either contention with something else using the same Google project or a throttled burst — transient either way.
 
 All five Google Sheets nodes now have **Retry On Fail** (5 tries, 5s apart), and the four write nodes use **On Error = Continue**. A row that still fails after five tries is not lost: it simply is not in the sheet, so the next run's dedup treats it as new and re-fetches it.
 
