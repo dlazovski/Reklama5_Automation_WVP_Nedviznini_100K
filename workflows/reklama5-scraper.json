@@ -262,7 +262,11 @@
           "id": "REPLACE_ME",
           "name": "Google Sheets account"
         }
-      }
+      },
+      "retryOnFail": true,
+      "maxTries": 5,
+      "waitBetweenTries": 5000,
+      "onError": "continueRegularOutput"
     },
     {
       "id": "n12",
@@ -370,7 +374,10 @@
           "id": "REPLACE_ME",
           "name": "Google Sheets account"
         }
-      }
+      },
+      "retryOnFail": true,
+      "maxTries": 5,
+      "waitBetweenTries": 5000
     },
     {
       "id": "n17",
@@ -532,7 +539,11 @@
           "id": "REPLACE_ME",
           "name": "Google Sheets account"
         }
-      }
+      },
+      "retryOnFail": true,
+      "maxTries": 5,
+      "waitBetweenTries": 5000,
+      "onError": "continueRegularOutput"
     },
     {
       "id": "n24",
@@ -583,7 +594,11 @@
           "id": "REPLACE_ME",
           "name": "Google Sheets account"
         }
-      }
+      },
+      "retryOnFail": true,
+      "maxTries": 5,
+      "waitBetweenTries": 5000,
+      "onError": "continueRegularOutput"
     },
     {
       "id": "n26",
@@ -696,7 +711,11 @@
           "id": "REPLACE_ME",
           "name": "Google Sheets account"
         }
-      }
+      },
+      "retryOnFail": true,
+      "maxTries": 5,
+      "waitBetweenTries": 5000,
+      "onError": "continueRegularOutput"
     },
     {
       "id": "n31",
